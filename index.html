@@ -1,63 +1,49 @@
 <!doctype html>
 <!--
 ==============================================================================
-  SREALITY STREET LOOKUP — one-file app
-  Opens Sreality.cz: apartments (byty) for sale (prodej), 500 m around a street.
+  APARTMENT LOOKUP: one-file app
+  Opens Sreality.cz: apartments (byty) for sale (prodej) in a small box around
+  where you stand, or around a street you type. No server, no API keys.
 ==============================================================================
 
   SREALITY SEARCH URL FORMAT  (edit buildSrealityUrl() below if Sreality changes it)
   ------------------------------------------------------------------------------
     https://www.sreality.cz/hledani/prodej/byty
-        ?region=ulice%20<Street name>      label shown in the search box
-        &region-id=<numeric street id>     Sreality's own locality ID (REQUIRED)
-        &region-typ=street                 type of that ID (street|ward|municipality…)
-        &vzdalenost=0.5                    radius in km ("vzdálenost") → 0.5 = 500 m
+        ?lat-max=<north edge>   latitude of the box's top
+        &lat-min=<south edge>   latitude of the box's bottom
+        &lon-max=<east edge>    longitude of the box's right side
+        &lon-min=<west edge>    longitude of the box's left side
 
-    Example (real link of this shape seen in the wild):
-    https://www.sreality.cz/hledani/prodej/byty?region=ulice%20Kotl%C3%A1%C5%99ka&region-id=125471&region-typ=street&vzdalenost=0.5
+    Example, 500 m around Náměstí Míru (tested on a phone, Nov 2026):
+    https://www.sreality.cz/hledani/prodej/byty?lat-max=50.0800&lat-min=50.0710&lon-max=14.4448&lon-min=14.4308
 
     /prodej  = for sale      (/pronajem = rent)
     /byty    = apartments    (/domy = houses)
 
-  GETTING THE STREET ID  (Sreality public autocomplete)
+    The box is a square: "200 m" means 200 m north, south, east and west of the
+    centre (so 400 m × 400 m). 1° latitude ≈ 111.32 km; 1° longitude ≈
+    111.32 km × cos(latitude), about 71.4 km in Prague.
+
+    Why not Sreality's own "street + vzdálenost" search? That needs Sreality's
+    internal street number (region-id), and browsers block a page on another
+    site from asking Sreality for it. Coordinates need no lookup at all.
+
+  WHERE THE CENTRE COMES FROM
   ------------------------------------------------------------------------------
-    GET https://www.sreality.cz/api/v1/localities/suggest
-        ?phrase=<street, city>&category=street_cz&locality_country_id=112&lang=cs&limit=10
-    → { "results": [ { "userData": {
-          "entityType": "street", "id": 125471, "suggestFirstRow": "Kotlářka",
-          "municipality": "Praha", "latitude": 50.07, "longitude": 14.38, … } } ] }
-    We take results where entityType == "street", prefer the right city and the
-    one nearest to your GPS position, and use userData.id as region-id.
-
-  !! CORS: Sreality's API does NOT send CORS headers, so a browser page on your
-  own domain usually cannot call it directly. The page tries, in order:
-     1. SUGGEST_PROXY (below), if you set one   ← recommended, see snippet
-     2. the Sreality API directly (works only if Sreality ever enables CORS)
-     3. an ID cached from an earlier successful lookup
-     4. fallback: city-wide search, e.g. /hledani/prodej/byty/praha (radius NOT
-        applied), only after telling you so on screen.
-
-  FREE PROXY: Cloudflare Worker  →  cloudflare-worker.js in this repo
-  ------------------------------------------------------------------------------
-    Paste that file into a new Worker (dash.cloudflare.com → Workers & Pages →
-    Create → Create Worker → Deploy → Edit code), set ALLOWED_ORIGIN to your
-    site, deploy, then put the Worker's address in SUGGEST_PROXY below, e.g.
-    "https://sreality-suggest.yourname.workers.dev/". It only calls Sreality's
-    street lookup, so it is not an open proxy.
-
-  DEMO MODE  (open the page as  index.html#demo, or just add #demo to the URL)
-    Fakes your location (Kotlářka, Praha 5) and the street-ID lookup, and shows
-    the Sreality link instead of leaving the page. Handy for previews; the real
-    app behaves exactly the same apart from those three things. Only Kotlářka
-    has a real ID (125471, taken from a public Sreality link); any other street
-    shows the "couldn't find the street ID" notice.
-
-  OTHER SERVICES
-    Reverse geocoding: OpenStreetMap Nominatim (free, max ~1 request/second,
-    https://operations.osmfoundation.org/policies/nominatim/). Called once per
-    "locate", never in a loop.
+    1. Your phone's GPS, while the street field still shows the street it found.
+    2. If you type another street: OpenStreetMap Nominatim search
+       (street + city, Czech Republic); with GPS on, the match nearest to you wins.
+    Nominatim is free, max ~1 request/second, and is called once per locate or
+    Go, never in a loop (https://operations.osmfoundation.org/policies/nominatim/).
     Geolocation needs HTTPS (or localhost).
-    Recent searches: localStorage key "srealityLookup.recent.v1" (last 5).
+
+  STORAGE (this browser only)
+    "apartmentLookup.recent.v2"  last 5 searches (street, city, centre, size)
+    "apartmentLookup.radius.v1"  chosen box size in metres
+
+  DEMO MODE  (add #demo to the URL)
+    Simulates standing on Náměstí Míru, knows a few Prague streets, and shows
+    the Sreality link instead of leaving the page. The links it shows are real.
 ==============================================================================
 -->
 <html lang="cs">
@@ -65,7 +51,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Byty v okolí</title>
-<meta name="description" content="Open Sreality apartments for sale within 500 m of where you are.">
+<meta name="description" content="Open Sreality apartments for sale right around where you are.">
 <meta name="theme-color" content="#c8102e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -100,12 +86,14 @@
       --ok: #5fc596;
       --warn-bg: #3a2f12;
       --warn-text: #f3d48a;
+      color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #141312; --card: #1e1d1b; --text: #f1efea; --muted: #a29e96;
     --line: #34322e; --accent: #e8344f; --accent-press: #c8213b;
     --ok: #5fc596; --warn-bg: #3a2f12; --warn-text: #f3d48a;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -116,6 +104,7 @@
     font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     min-height: 100dvh;
   }
+  [hidden] { display: none !important; }
   /* Content stacks from the bottom so the Go button sits under the thumb. */
   .app {
     max-width: 520px;
@@ -162,8 +151,9 @@
   .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
   .status.busy .dot { animation: pulse 1s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .status.busy .dot { animation: none; } }
 
-  label { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
+  label, .label { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
   .field + .field { margin-top: 12px; }
   .row { display: flex; gap: 8px; }
   input[type="text"] {
@@ -181,22 +171,29 @@
   .icon-btn:active { background: var(--line); }
   .icon-btn svg { width: 24px; height: 24px; }
 
-  .fixed { margin: 12px 0 0; font-size: 14px; color: var(--muted); }
-  .fixed b { color: var(--text); font-weight: 600; }
+  /* Box size: three big segments */
+  .sizes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; border: 0; margin: 0; padding: 0; }
+  .sizes input { position: absolute; opacity: 0; pointer-events: none; }
+  .sizes label {
+    margin: 0; min-height: 50px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 17px; font-weight: 700;
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .sizes input:checked + label { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .sizes input:focus-visible + label { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .hint { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+  .hint b { color: var(--text); font-weight: 600; }
 
   .notice {
     background: var(--warn-bg); color: var(--warn-text);
     border-radius: 12px; padding: 12px 14px; font-size: 15px;
+    display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
   }
-  .notice[hidden] { display: none; }
-  .notice .actions { display: flex; gap: 8px; margin-top: 10px; }
-  .notice button, .notice a {
-    flex: 1; min-height: 46px; border-radius: 10px; border: 0;
+  .notice button {
+    flex: none; min-height: 40px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid currentColor; background: transparent; color: inherit;
     font: inherit; font-weight: 600; cursor: pointer;
-    display: grid; place-items: center; text-decoration: none;
   }
-  .notice .primary { background: var(--accent); color: var(--accent-text); }
-  .notice .secondary { background: transparent; color: inherit; border: 1px solid currentColor; }
 
   .demo-banner {
     border: 1px dashed var(--accent); color: var(--text);
@@ -204,7 +201,6 @@
   }
   .demo-banner b { color: var(--accent); }
   .result { display: grid; gap: 10px; }
-  .result[hidden], .demo-banner[hidden] { display: none; }
   .result code {
     display: block; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--muted); word-break: break-all;
@@ -227,11 +223,11 @@
 <main class="app">
   <header>
     <h1>Byty na prodej v okolí</h1>
-    <p>Sreality · apartments for sale · 500 m around a street</p>
+    <p>Sreality · apartments for sale · right around you</p>
   </header>
 
   <div class="demo-banner" id="demo-banner" hidden>
-    <b>Demo.</b> Location and street lookup are simulated (you're “standing” on Kotlářka, Praha&nbsp;5). Go shows the Sreality link instead of leaving this page.
+    <b>Demo.</b> Your location is simulated (you're “standing” on Náměstí Míru, Praha&nbsp;2). Go shows the real Sreality link instead of leaving this page.
   </div>
 
   <section class="card" aria-labelledby="recent-h">
@@ -259,7 +255,15 @@
         <label for="city">City / Obec</label>
         <input type="text" id="city" name="city" autocapitalize="words" spellcheck="false" value="Praha" required>
       </div>
-      <p class="fixed"><b>Byty</b> · <b>Prodej</b> · <b>500 m</b> radius</p>
+      <div class="field">
+        <span class="label" id="size-label">Search area / Okolí</span>
+        <fieldset class="sizes" aria-labelledby="size-label">
+          <input type="radio" name="size" id="size-100" value="100"><label for="size-100">100 m</label>
+          <input type="radio" name="size" id="size-200" value="200"><label for="size-200">200 m</label>
+          <input type="radio" name="size" id="size-500" value="500"><label for="size-500">500 m</label>
+        </fieldset>
+        <p class="hint" id="size-hint"></p>
+      </div>
     </form>
   </section>
 
@@ -271,10 +275,7 @@
 
   <div class="notice" id="notice" hidden>
     <div id="notice-text"></div>
-    <div class="actions">
-      <a class="primary" id="notice-open" href="#">Open anyway</a>
-      <button type="button" class="secondary" id="notice-close">Cancel</button>
-    </div>
+    <button type="button" id="notice-close">OK</button>
   </div>
 
   <button class="go" id="go" type="submit" form="form">GO →</button>
@@ -285,15 +286,12 @@
   "use strict";
 
   /* ---------- Settings ---------- */
-  // Optional: URL of a small CORS proxy for Sreality's suggest API (see the
-  // comment at the top of this file). Leave "" to try Sreality directly.
-  var SUGGEST_PROXY = "";
-
-  var SREALITY_SUGGEST = "https://www.sreality.cz/api/v1/localities/suggest";
   var SREALITY_SEARCH = "https://www.sreality.cz/hledani/prodej/byty";
-  var RADIUS_KM = "0.5";
-  var RECENT_KEY = "srealityLookup.recent.v1";
-  var IDCACHE_KEY = "srealityLookup.ids.v1";
+  var NOMINATIM = "https://nominatim.openstreetmap.org";
+  var SIZES = [100, 200, 500];   // metres from the centre to each edge of the box
+  var DEFAULT_SIZE = 200;
+  var RECENT_KEY = "apartmentLookup.recent.v2";
+  var SIZE_KEY = "apartmentLookup.radius.v1";
   var MAX_RECENT = 5;
   // Demo mode: add #demo to the URL, or a host page setting window.SREALITY_DEMO = true.
   var DEMO = location.hash === "#demo" || window.SREALITY_DEMO === true;
@@ -302,10 +300,12 @@
   var $ = function (id) { return document.getElementById(id); };
   var form = $("form"), streetEl = $("street"), cityEl = $("city"), goBtn = $("go");
   var statusEl = $("status"), statusText = $("status-text");
-  var notice = $("notice"), noticeText = $("notice-text"), noticeOpen = $("notice-open");
+  var notice = $("notice"), noticeText = $("notice-text");
 
-  var lastCoords = null;  // {lat, lon} from the browser, used to pick the nearest street match
-  var userEdited = false; // don't overwrite what the user typed
+  var gps = null;          // {lat, lon, accuracy} from the phone
+  var gpsStreet = "";      // street name OpenStreetMap found at the GPS position
+  var gpsCity = null;      // city OpenStreetMap found there (null until known)
+  var userEdited = false;  // don't overwrite what the user typed
 
   function setStatus(text, kind) {
     statusText.textContent = text;
@@ -327,62 +327,40 @@
       .toLowerCase().replace(/\s+/g, " ").trim();
   }
   function tidy(s) { return String(s || "").normalize("NFC").replace(/\s+/g, " ").trim(); }
-  function slug(s) { return norm(s).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+
+  /* ---------- Box size ---------- */
+  function currentSize() {
+    var el = form.querySelector('input[name="size"]:checked');
+    return el ? Number(el.value) : DEFAULT_SIZE;
+  }
+  function updateSizeHint() {
+    var m = currentSize();
+    $("size-hint").innerHTML = "<b>Byty</b> · <b>Prodej</b> · " + m + " m each way (" +
+      (2 * m) + " × " + (2 * m) + " m area)";
+  }
+  (function initSize() {
+    var saved = Number(load(SIZE_KEY, DEFAULT_SIZE));
+    if (SIZES.indexOf(saved) === -1) saved = DEFAULT_SIZE;
+    $("size-" + saved).checked = true;
+    updateSizeHint();
+    form.addEventListener("change", function (ev) {
+      if (ev.target.name === "size") { save(SIZE_KEY, currentSize()); updateSizeHint(); }
+    });
+  })();
 
   /* ---------- URL builder ---------- */
-  function buildSrealityUrl(streetLabel, regionId) {
+  function buildSrealityUrl(lat, lon, metres) {
+    var dLat = metres / 111320;
+    var dLon = metres / (111320 * Math.cos(lat * Math.PI / 180));
+    var f = function (n) { return n.toFixed(6); };
     return SREALITY_SEARCH +
-      "?region=" + encodeURIComponent("ulice " + streetLabel) +
-      "&region-id=" + encodeURIComponent(regionId) +
-      "&region-typ=street" +
-      "&vzdalenost=" + RADIUS_KM;
-  }
-  // Fallback when no street ID is available: city-wide apartments for sale,
-  // e.g. https://www.sreality.cz/hledani/prodej/byty/praha
-  // Sreality cannot apply the radius without an ID.
-  function buildFallbackUrl(city) {
-    return SREALITY_SEARCH + "/" + (slug(city) || "praha");
+      "?lat-max=" + f(lat + dLat) +
+      "&lat-min=" + f(lat - dLat) +
+      "&lon-max=" + f(lon + dLon) +
+      "&lon-min=" + f(lon - dLon);
   }
 
-  /* ---------- Geolocation + reverse geocoding ---------- */
-  function locate() {
-    if (!("geolocation" in navigator)) {
-      setStatus("Location not available here — type the street.");
-      return;
-    }
-    if (!window.isSecureContext) {
-      setStatus("Location needs HTTPS — type the street.");
-      return;
-    }
-    setStatus("Finding your location…", "busy");
-    navigator.geolocation.getCurrentPosition(function (pos) {
-      lastCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-      reverseGeocode(lastCoords);
-    }, function (err) {
-      var msg = err && err.code === 1 ? "Location blocked" : "Couldn't get location";
-      setStatus(msg + " — type the street.");
-    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
-  }
-
-  function reverseGeocode(c) {
-    setStatus("Looking up the street…", "busy");
-    var url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&addressdetails=1" +
-      "&accept-language=cs&lat=" + c.lat.toFixed(6) + "&lon=" + c.lon.toFixed(6);
-    fetchJson(url, 10000).then(function (data) {
-      var a = (data && data.address) || {};
-      var street = a.road || a.pedestrian || a.square || a.footway || a.path || a.cycleway || a.place || "";
-      var city = a.city || a.town || a.village || a.municipality || "";
-      if (!userEdited) {
-        if (street) streetEl.value = tidy(street);
-        if (city) cityEl.value = tidy(city);
-      }
-      if (street) setStatus("You're on " + tidy(street) + (city ? ", " + tidy(city) : ""), "ok");
-      else setStatus("No street found here — type it.");
-    }).catch(function () {
-      setStatus("Couldn't look up the street — type it.");
-    });
-  }
-
+  /* ---------- Network ---------- */
   function fetchJson(url, timeoutMs) {
     var ctrl = "AbortController" in window ? new AbortController() : null;
     var t = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 8000) : null;
@@ -391,68 +369,80 @@
       .finally(function () { if (t) clearTimeout(t); });
   }
 
-  /* ---------- Sreality street ID lookup ---------- */
-  function suggestUrl(base, street, city) {
-    return base + (base.indexOf("?") === -1 ? "?" : "&") +
-      "phrase=" + encodeURIComponent(street + ", " + city) +
-      "&category=street_cz&locality_country_id=112&lang=cs&limit=10";
-  }
-
-  function distance(a, b) { // rough metres, fine for ranking
+  function distance(a, b) { // metres, good enough at city scale
     var dLat = (a.lat - b.lat) * 111320;
     var dLon = (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180);
     return Math.sqrt(dLat * dLat + dLon * dLon);
   }
 
-  function pickStreet(data, street, city) {
-    var items = ((data && data.results) || []).map(function (r) { return r.userData || r; })
-      .filter(function (u) { return u && u.entityType === "street" && (u.id || u.street_id); });
-    if (!items.length) return null;
-    var nStreet = norm(street), nCity = norm(city);
-    items.forEach(function (u) {
-      var score = 0;
-      var name = norm(u.suggestFirstRow || u.street || "");
-      var muni = norm([u.municipality, u.suggestSecondRow, u.district, u.region].join(" "));
-      if (name === nStreet) score += 1000; else if (name.indexOf(nStreet) === 0) score += 400;
-      if (nCity && muni.indexOf(nCity) !== -1) score += 500;
-      if (lastCoords && u.latitude && u.longitude) {
-        score -= Math.min(distance(lastCoords, { lat: u.latitude, lon: u.longitude }) / 50, 900);
-      }
-      u._score = score;
-    });
-    items.sort(function (a, b) { return b._score - a._score; });
-    var best = items[0];
-    return { id: String(best.id || best.street_id), label: tidy(best.suggestFirstRow || street) };
+  /* ---------- GPS + street name ---------- */
+  function locate() {
+    if (!("geolocation" in navigator)) { setStatus("Location not available here. Type the street."); return; }
+    if (!window.isSecureContext) { setStatus("Location needs HTTPS. Type the street."); return; }
+    setStatus("Finding your location…", "busy");
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      gps = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      reverseGeocode(gps);
+    }, function (err) {
+      var msg = err && err.code === 1 ? "Location blocked" : "Couldn't get location";
+      setStatus(msg + ". Type the street.");
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
   }
 
-  function lookupStreetId(street, city) {
-    var cacheKey = norm(street) + "|" + norm(city);
-    var cache = load(IDCACHE_KEY, {});
-    var sources = [];
-    if (SUGGEST_PROXY) sources.push(suggestUrl(SUGGEST_PROXY, street, city));
-    sources.push(suggestUrl(SREALITY_SUGGEST, street, city));
+  function gpsNote() {
+    return gps && gps.accuracy > 60 ? " (GPS ±" + Math.round(gps.accuracy) + " m)" : "";
+  }
 
-    function attempt(i) {
-      if (i >= sources.length) {
-        return cache[cacheKey] ? Promise.resolve(cache[cacheKey]) : Promise.reject(new Error("lookup failed"));
+  function reverseGeocode(c) {
+    setStatus("Looking up the street…", "busy");
+    var url = NOMINATIM + "/reverse?format=jsonv2&zoom=17&addressdetails=1&accept-language=cs" +
+      "&lat=" + c.lat.toFixed(6) + "&lon=" + c.lon.toFixed(6);
+    fetchJson(url, 10000).then(function (data) {
+      var a = (data && data.address) || {};
+      var street = tidy(a.road || a.pedestrian || a.square || a.footway || a.path || a.cycleway || a.place || "");
+      var city = tidy(a.city || a.town || a.village || a.municipality || "");
+      gpsStreet = street;
+      gpsCity = city || tidy(cityEl.value);
+      if (!userEdited) {
+        streetEl.value = street;
+        if (city) cityEl.value = city;
       }
-      return fetchJson(sources[i], 7000).then(function (data) {
-        var hit = pickStreet(data, street, city);
-        if (!hit) throw new Error("no street match");
-        cache[cacheKey] = hit; save(IDCACHE_KEY, cache);
-        return hit;
-      }).catch(function (e) {
-        if (e && e.message === "no street match") throw e; // API answered: street truly not found
-        return attempt(i + 1);
-      });
+      setStatus((street ? "You're on " + street + (city ? ", " + city : "") : "Location found") + gpsNote(), "ok");
+    }).catch(function () {
+      // Still usable: Go searches around the GPS point even without a street name.
+      gpsStreet = "";
+      gpsCity = tidy(cityEl.value);
+      setStatus("Location found" + gpsNote() + ". Street name unavailable.", "ok");
+    });
+  }
+
+  /* ---------- Typed street → coordinates ---------- */
+  function geocodeStreet(street, city) {
+    var url = NOMINATIM + "/search?format=jsonv2&limit=8&countrycodes=cz&accept-language=cs" +
+      "&street=" + encodeURIComponent(street) + "&city=" + encodeURIComponent(city);
+    return fetchJson(url, 10000).then(function (list) {
+      var hits = (list || []).map(function (r) { return { lat: Number(r.lat), lon: Number(r.lon) }; })
+        .filter(function (p) { return isFinite(p.lat) && isFinite(p.lon); });
+      if (!hits.length) throw new Error("not found");
+      if (gps) hits.sort(function (a, b) { return distance(gps, a) - distance(gps, b); });
+      return hits[0];
+    });
+  }
+
+  // Use GPS when the street and city fields still show what the GPS found (or
+  // the street is empty while GPS is known); otherwise look up the typed street.
+  function findCentre(street, city) {
+    var sameCity = gpsCity === null || norm(city) === norm(gpsCity);
+    if (gps && (!street || (norm(street) === norm(gpsStreet) && sameCity))) {
+      return Promise.resolve({ lat: gps.lat, lon: gps.lon });
     }
-    return attempt(0);
+    return geocodeStreet(street, city);
   }
 
   /* ---------- Recent searches ---------- */
   function addRecent(entry) {
     var list = load(RECENT_KEY, []).filter(function (r) {
-      return !(norm(r.street) === norm(entry.street) && norm(r.city) === norm(entry.city));
+      return !(norm(r.street) === norm(entry.street) && norm(r.city) === norm(entry.city) && r.size === entry.size);
     });
     list.unshift(entry);
     save(RECENT_KEY, list.slice(0, MAX_RECENT));
@@ -469,15 +459,15 @@
       var b = document.createElement("button");
       b.type = "button";
       var text = document.createElement("span");
-      var main = document.createElement("div"); main.className = "r-main"; main.textContent = r.street;
+      var main = document.createElement("div"); main.className = "r-main"; main.textContent = r.street || "My location";
       var sub = document.createElement("div"); sub.className = "r-sub";
-      sub.textContent = r.city + (r.exact ? " · 500 m" : " · city-wide");
+      sub.textContent = r.city + " · " + r.size + " m";
       text.appendChild(main); text.appendChild(sub);
       var go = document.createElement("span"); go.className = "r-go"; go.textContent = "→";
       b.appendChild(text); b.appendChild(go);
       b.addEventListener("click", function () {
         addRecent(Object.assign({}, r, { ts: Date.now() }));
-        openUrl(r.url);
+        openUrl(buildSrealityUrl(r.lat, r.lon, r.size));
       });
       li.appendChild(b);
       ul.appendChild(li);
@@ -496,14 +486,8 @@
     window.location.assign(url);
   }
 
-  function showFallback(street, city, reason) {
-    var url = buildFallbackUrl(city);
-    noticeText.textContent = reason + " Sreality needs its own street ID for the 500 m radius. " +
-      "You can open a search across " + city + " instead.";
-    noticeOpen.href = url;
-    noticeOpen.onclick = function () {
-      addRecent({ street: street, city: city, url: url, exact: false, ts: Date.now() });
-    };
+  function showNotice(text) {
+    noticeText.textContent = text;
     notice.hidden = false;
     notice.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -512,30 +496,27 @@
     ev.preventDefault();
     notice.hidden = true;
     $("result").hidden = true;
-    var street = tidy(streetEl.value), city = tidy(cityEl.value) || "Praha";
-    if (!street) { streetEl.focus(); setStatus("Type a street first."); return; }
+    var street = tidy(streetEl.value), city = tidy(cityEl.value) || "Praha", size = currentSize();
+    if (!street && !gps) { streetEl.focus(); setStatus("Type a street first."); return; }
     goBtn.disabled = true;
-    setStatus("Finding " + street + " on Sreality…", "busy");
-    lookupStreetId(street, city).then(function (hit) {
-      var url = buildSrealityUrl(hit.label, hit.id);
-      addRecent({ street: street, city: city, url: url, exact: true, ts: Date.now() });
+    setStatus(street ? "Finding " + street + "…" : "Using your location…", "busy");
+    findCentre(street, city).then(function (c) {
+      addRecent({ street: street, city: city, lat: c.lat, lon: c.lon, size: size, ts: Date.now() });
       setStatus("Opening Sreality…", "ok");
-      openUrl(url);
+      openUrl(buildSrealityUrl(c.lat, c.lon, size));
     }).catch(function (e) {
-      var reason = e && e.message === "no street match"
-        ? "Sreality doesn't know a street called “" + street + "” in " + city + "."
-        : e && e.message === "demo unknown"
-        ? "The demo only knows Kotlářka, Praha (the real app looks up any street)."
-        : "Couldn't reach Sreality's street lookup.";
-      setStatus(reason);
-      showFallback(street, city, reason);
+      var text = e && e.message === "not found"
+        ? "Couldn't find “" + street + "” in " + city + ". Check the spelling, or tap the location button to use where you are."
+        : "Couldn't look up “" + street + "”. Check your connection and try again.";
+      setStatus("Street not found.");
+      showNotice(text);
     }).finally(function () {
       goBtn.disabled = false;
     });
   });
 
   $("notice-close").addEventListener("click", function () { notice.hidden = true; });
-  $("locate").addEventListener("click", function () { userEdited = false; locate(); });
+  $("locate").addEventListener("click", function () { userEdited = false; gpsCity = null; locate(); });
   streetEl.addEventListener("input", function () { userEdited = true; });
   cityEl.addEventListener("input", function () { userEdited = true; });
   // Coming back from Sreality via the back button: re-enable the button.
@@ -573,28 +554,34 @@
     } catch (e) { /* non-essential */ }
   }
 
-  /* ---------- Start ---------- */
-  /* ---------- Demo mode (#demo): simulated location + lookup, no redirect ---------- */
+  /* ---------- Demo mode (#demo): simulated location, a few known streets, no redirect ---------- */
   if (DEMO) {
     $("demo-banner").hidden = false;
-    noticeOpen.target = "_blank";
-    RECENT_KEY += ".demo"; IDCACHE_KEY += ".demo";
-    var DEMO_STREETS = { "kotlarka|praha": { id: "125471", label: "Kotlářka" } };
+    RECENT_KEY += ".demo";
+    var DEMO_STREETS = {           // approximate centres, enough for a demo
+      "namesti miru": { lat: 50.0755, lon: 14.4378 },
+      "vinohradska":  { lat: 50.0778, lon: 14.4440 },
+      "zitna":        { lat: 50.0770, lon: 14.4235 },
+      "kotlarka":     { lat: 50.0716, lon: 14.3880 }
+    };
     locate = function () {
       setStatus("Finding your location…", "busy");
       setTimeout(function () {
-        lastCoords = { lat: 50.0716, lon: 14.3880 };
+        gps = { lat: 50.0755, lon: 14.4378, accuracy: 12 };
         setStatus("Looking up the street…", "busy");
         setTimeout(function () {
-          if (!userEdited) { streetEl.value = "Kotlářka"; cityEl.value = "Praha"; }
-          setStatus("You're on Kotlářka, Praha (demo location)", "ok");
+          gpsStreet = "náměstí Míru"; gpsCity = "Praha";
+          if (!userEdited) { streetEl.value = gpsStreet; cityEl.value = "Praha"; }
+          setStatus("You're on náměstí Míru, Praha (demo location)", "ok");
         }, 500);
       }, 700);
     };
-    lookupStreetId = function (street, city) {
-      var hit = DEMO_STREETS[norm(street) + "|" + norm(city)];
+    geocodeStreet = function (street, city) {
+      var hit = norm(city) === "praha" && DEMO_STREETS[norm(street)];
       return new Promise(function (resolve, reject) {
-        setTimeout(function () { hit ? resolve(hit) : reject(new Error("demo unknown")); }, 450);
+        setTimeout(function () {
+          hit ? resolve({ lat: hit.lat, lon: hit.lon }) : reject(new Error("not found"));
+        }, 450);
       });
     };
   }

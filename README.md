@@ -1,53 +1,45 @@
-# Byty v okolí: Sreality street lookup
+# Byty v okolí: Apartment Lookup
 
-One tap from where you're standing to **Sreality apartments for sale within 500 m**.
-It's a single HTML file, [`index.html`](index.html), with no framework and no build step.
+One tap from where you're standing to **Sreality apartments for sale right around you**: 100, 200 or 500 m.
+It's a single HTML file, [`index.html`](index.html), with no framework, no build step and no server code.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Demo: the page finds Kotlářka, Praha, Go shows the Sreality link, an unknown street shows the fallback notice, and a recent search repeats it" width="300">
+  <img src="docs/demo.gif" alt="Demo: the page finds náměstí Míru, 100 m is chosen and Go shows the Sreality link; then Žitná is typed with 200 m, and a recent search is repeated" width="300">
 </p>
 
 ## Try it
 
 | | Link | What runs |
 |---|---|---|
-| **Live demo** | [claude.ai/artifact/FjGmnSJ3sfeQQxfqMVdLh5](https://claude.ai/artifact/FjGmnSJ3sfeQQxfqMVdLh5) | Demo mode: simulated location and lookup; Go shows the link |
-| **Demo on your site** | `https://<your-site>/#demo` | Same demo mode, from this repo |
-| **Real app** | `https://<your-site>/` | Real GPS, OpenStreetMap and Sreality redirect (needs HTTPS and the proxy below) |
+| **Live demo** | [claude.ai/artifact/FjGmnSJ3sfeQQxfqMVdLh5](https://claude.ai/artifact/FjGmnSJ3sfeQQxfqMVdLh5) | Simulated location; Go shows the real Sreality link |
+| **Demo on your site** | `https://<your-site>/#demo` | The same demo, from this repo |
+| **Real app** | `https://<your-site>/` | Real GPS, OpenStreetMap, then straight to Sreality |
 
 The live demo is private until you share it from its Share menu.
 
 ## Screens
 
-![Start screen with the street filled in from location; result after Go, in light and dark mode](docs/screens.png)
+![Start screen with the street filled in from location and 200 m chosen; result after Go, in light and dark mode](docs/screens.png)
 
 ## How it works
 
-1. **Location.** The browser's geolocation finds you, and [Nominatim](https://nominatim.openstreetmap.org) turns the coordinates into a street and city. Both stay editable, and the city defaults to *Praha*.
-2. **Street ID.** Sreality's radius search needs its own numeric street ID, so the page asks Sreality's autocomplete for it. It picks the match in your city that's closest to you.
-3. **Go.** The page opens:
+1. **Where you are.** The phone's GPS gives your position, and [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org) names the street and city. Both fields stay editable, and the city defaults to *Praha*.
+2. **Typed street.** If you type a different street, OpenStreetMap finds its coordinates. With GPS on, the match nearest to you wins.
+3. **Size.** Choose 100, 200 or 500 m each way from the centre. The page remembers your choice.
+4. **Go.** The page opens Sreality with that square as a map area:
    ```
-   https://www.sreality.cz/hledani/prodej/byty?region=ulice%20<Street>&region-id=<id>&region-typ=street&vzdalenost=0.5
+   https://www.sreality.cz/hledani/prodej/byty?lat-max=<north>&lat-min=<south>&lon-max=<east>&lon-min=<west>
    ```
-4. **Recent searches.** The last 5 searches are kept in `localStorage`. Tap one to repeat it.
+5. **Recent searches.** The last 5 are kept in the browser. Tap one to repeat it.
 
-## The one setup step: a small proxy
+Sreality's own "street + distance" search needs its internal street number, which browsers can't fetch from another site. A map area needs no lookup, so the page works as a plain HTML file. The comment at the top of `index.html` explains the URL format in case Sreality changes it.
 
-Sreality's autocomplete endpoint (`/api/v1/localities/suggest`) blocks calls from web pages on other sites (it sends no CORS headers). The page is static, so a free **Cloudflare Worker** does that one call:
+## Publish it
 
-1. Create a free account at [dash.cloudflare.com](https://dash.cloudflare.com).
-2. Go to **Workers & Pages → Create → Create Worker**, name it e.g. `sreality-suggest`, and click **Deploy**.
-3. Click **Edit code**, replace everything with [`cloudflare-worker.js`](cloudflare-worker.js), and set `ALLOWED_ORIGIN` to your site's address, e.g. `https://www.example.cz` (no trailing slash).
-4. Click **Deploy** and copy the Worker's address, e.g. `https://sreality-suggest.yourname.workers.dev`.
-5. In `index.html`, put that address into `var SUGGEST_PROXY = "";` and upload the file again.
+Upload `index.html` to any web hosting that serves **HTTPS**. Phones only share location with HTTPS pages. Nothing else is needed: no PHP, no database, no API keys.
 
-The Worker only calls Sreality's street lookup and only answers your own site. Nothing runs on your web hosting.
-
-Without the proxy, Go offers a search across the whole city with no radius, and the page says so on screen first.
-
-## Hosting
-
-Any static HTTPS host works, because the page is one file (`index.html`); the Worker runs on Cloudflare. The free option is **GitHub Pages**: in this repo, go to Settings → Pages, choose *Deploy from a branch*, then pick `main` and `/ (root)`. The app is then at `https://<user>.github.io/apartment-lookup/`. Location only works over HTTPS, which Pages provides.
+- **Your own hosting:** upload it over FTP or the file manager, e.g. as `byty/index.html`, and open `https://<your-domain>/byty/`.
+- **GitHub Pages, free:** Settings → Pages → *Deploy from a branch* → `main`, `/ (root)`. It's then at `https://<user>.github.io/apartment-lookup/`.
 
 ## Add to home screen
 
@@ -58,4 +50,4 @@ The icon is generated by the page itself, so nothing else needs to be hosted.
 
 ## Demo mode
 
-Add `#demo` to the URL. It fakes standing on Kotlářka, Praha 5, and its street ID (125471) comes from a public Sreality link. Go shows the link instead of leaving the page. Any other street shows the "no street ID" notice, as the real app does when the lookup fails.
+Add `#demo` to the URL. It simulates standing on náměstí Míru, Praha 2, and knows a few streets (náměstí Míru, Vinohradská, Žitná, Kotlářka). Go shows the Sreality link instead of leaving the page. The links are real and open real results.
