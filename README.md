@@ -11,11 +11,9 @@ It's a single HTML file, [`index.html`](index.html), with no framework, no build
 
 | | Link | What runs |
 |---|---|---|
-| **Live demo** | [claude.ai/artifact/FjGmnSJ3sfeQQxfqMVdLh5](https://claude.ai/artifact/FjGmnSJ3sfeQQxfqMVdLh5) | Simulated location; Go shows the real Sreality link |
+| **Live demo** | *link coming soon* | Simulated location; Go shows the real Sreality link |
 | **Demo on your site** | `https://<your-site>/#demo` | The same demo, from this repo |
 | **Real app** | `https://<your-site>/` | Real GPS, OpenStreetMap, then straight to Sreality |
-
-The live demo is private until you share it from its Share menu.
 
 ## Screens
 
