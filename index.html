@@ -20,6 +20,7 @@
     /prodej  = for sale      (/pronajem = rent)
     /byty    = apartments    (/domy = houses)
 
+    Sizes offered: 100 m (default) and 200 m; change SIZES in the script.
     The box is a square: "200 m" means 200 m north, south, east and west of the
     centre (so 400 m × 400 m). 1° latitude ≈ 111.32 km; 1° longitude ≈
     111.32 km × cos(latitude), about 71.4 km in Prague.
@@ -172,7 +173,7 @@
   .icon-btn svg { width: 24px; height: 24px; }
 
   /* Box size: three big segments */
-  .sizes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; border: 0; margin: 0; padding: 0; }
+  .sizes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; border: 0; margin: 0; padding: 0; }
   .sizes input { position: absolute; opacity: 0; pointer-events: none; }
   .sizes label {
     margin: 0; min-height: 50px; border-radius: 12px; border: 1px solid var(--line);
@@ -260,7 +261,6 @@
         <fieldset class="sizes" aria-labelledby="size-label">
           <input type="radio" name="size" id="size-100" value="100"><label for="size-100">100 m</label>
           <input type="radio" name="size" id="size-200" value="200"><label for="size-200">200 m</label>
-          <input type="radio" name="size" id="size-500" value="500"><label for="size-500">500 m</label>
         </fieldset>
         <p class="hint" id="size-hint"></p>
       </div>
@@ -288,8 +288,8 @@
   /* ---------- Settings ---------- */
   var SREALITY_SEARCH = "https://www.sreality.cz/hledani/prodej/byty";
   var NOMINATIM = "https://nominatim.openstreetmap.org";
-  var SIZES = [100, 200, 500];   // metres from the centre to each edge of the box
-  var DEFAULT_SIZE = 200;
+  var SIZES = [100, 200];        // metres from the centre to each edge of the box
+  var DEFAULT_SIZE = 100;
   var RECENT_KEY = "apartmentLookup.recent.v2";
   var SIZE_KEY = "apartmentLookup.radius.v1";
   var MAX_RECENT = 5;
@@ -455,19 +455,21 @@
     ul.textContent = "";
     $("recent-empty").hidden = list.length > 0;
     list.forEach(function (r) {
+      // Searches saved with a size no longer offered (e.g. 500 m) repeat at the largest one.
+      var size = SIZES.indexOf(r.size) === -1 ? SIZES[SIZES.length - 1] : r.size;
       var li = document.createElement("li");
       var b = document.createElement("button");
       b.type = "button";
       var text = document.createElement("span");
       var main = document.createElement("div"); main.className = "r-main"; main.textContent = r.street || "My location";
       var sub = document.createElement("div"); sub.className = "r-sub";
-      sub.textContent = r.city + " · " + r.size + " m";
+      sub.textContent = r.city + " · " + size + " m";
       text.appendChild(main); text.appendChild(sub);
       var go = document.createElement("span"); go.className = "r-go"; go.textContent = "→";
       b.appendChild(text); b.appendChild(go);
       b.addEventListener("click", function () {
-        addRecent(Object.assign({}, r, { ts: Date.now() }));
-        openUrl(buildSrealityUrl(r.lat, r.lon, r.size));
+        addRecent(Object.assign({}, r, { size: size, ts: Date.now() }));
+        openUrl(buildSrealityUrl(r.lat, r.lon, size));
       });
       li.appendChild(b);
       ul.appendChild(li);

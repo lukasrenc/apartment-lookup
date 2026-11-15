@@ -1,6 +1,6 @@
 # Byty v okolí: Apartment Lookup
 
-One tap from where you're standing to **Sreality apartments for sale right around you**: 100, 200 or 500 m.
+One tap from where you're standing to **Sreality apartments for sale right around you**: 100 or 200 m.
 It's a single HTML file, [`index.html`](index.html), with no framework, no build step and no server code.
 
 <p align="center">
@@ -19,13 +19,13 @@ The live demo is private until you share it from its Share menu.
 
 ## Screens
 
-![Start screen with the street filled in from location and 200 m chosen; result after Go, in light and dark mode](docs/screens.png)
+![Start screen with the street filled in from location and 100 m chosen; result after Go, in light and dark mode](docs/screens.png)
 
 ## How it works
 
 1. **Where you are.** The phone's GPS gives your position, and [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org) names the street and city. Both fields stay editable, and the city defaults to *Praha*.
 2. **Typed street.** If you type a different street, OpenStreetMap finds its coordinates. With GPS on, the match nearest to you wins.
-3. **Size.** Choose 100, 200 or 500 m each way from the centre. The page remembers your choice.
+3. **Size.** Choose 100 m (the default) or 200 m each way from the centre. The page remembers your choice.
 4. **Go.** The page opens Sreality with that square as a map area:
    ```
    https://www.sreality.cz/hledani/prodej/byty?lat-max=<north>&lat-min=<south>&lon-max=<east>&lon-min=<west>
