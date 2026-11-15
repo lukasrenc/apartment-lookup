@@ -7,14 +7,6 @@ It's a single HTML file, [`index.html`](index.html), with no framework, no build
   <img src="docs/demo.gif" alt="Demo: the page finds náměstí Míru, 100 m is chosen and Go shows the Sreality link; then Žitná is typed with 200 m, and a recent search is repeated" width="300">
 </p>
 
-## Try it
-
-| | Link | What runs |
-|---|---|---|
-| **Live demo** | *link coming soon* | Simulated location; Go shows the real Sreality link |
-| **Demo on your site** | `https://<your-site>/#demo` | The same demo, from this repo |
-| **Real app** | `https://<your-site>/` | Real GPS, OpenStreetMap, then straight to Sreality |
-
 ## Screens
 
 ![Start screen with the street, size and Go button on the first screen; result after Go with recent searches below, in light and dark mode](docs/screens.png)
