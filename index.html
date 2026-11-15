@@ -2,7 +2,7 @@
 <!--
 ==============================================================================
   APARTMENT LOOKUP: one-file app
-  Opens Sreality.cz: apartments (byty) for sale (prodej) in a small box around
+  Opens Sreality.cz: apartments for sale in a small box around
   where you stand, or around a street you type. No server, no API keys.
 ==============================================================================
 
@@ -25,7 +25,7 @@
     centre (so 400 m × 400 m). 1° latitude ≈ 111.32 km; 1° longitude ≈
     111.32 km × cos(latitude), about 71.4 km in Prague.
 
-    Why not Sreality's own "street + vzdálenost" search? That needs Sreality's
+    Why not Sreality's own "street + distance" search? That needs Sreality's
     internal street number (region-id), and browsers block a page on another
     site from asking Sreality for it. Coordinates need no lookup at all.
 
@@ -43,20 +43,20 @@
     "apartmentLookup.radius.v1"  chosen box size in metres
 
   DEMO MODE  (add #demo to the URL)
-    Simulates standing on Náměstí Míru, knows a few Prague streets, and shows
+    Simulates standing on náměstí Míru, knows a few Prague streets, and shows
     the Sreality link instead of leaving the page. The links it shows are real.
 ==============================================================================
 -->
-<html lang="cs">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Byty v okolí</title>
+<title>Apartment Lookup</title>
 <meta name="description" content="Open Sreality apartments for sale right around where you are.">
 <meta name="theme-color" content="#c8102e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Byty okolí">
+<meta name="apple-mobile-web-app-title" content="Apartment Lookup">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link id="touch-icon" rel="apple-touch-icon" href="">
 <link id="favicon" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23c8102e'/%3E%3Cpath d='M32 12c-8.3 0-15 6.5-15 14.6C17 37.5 32 52 32 52s15-14.5 15-25.4C47 18.5 40.3 12 32 12zm0 20a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z' fill='%23fff'/%3E%3C/svg%3E">
@@ -222,12 +222,12 @@
 <body>
 <main class="app">
   <header>
-    <h1>Byty na prodej v okolí</h1>
+    <h1>Apartment Lookup</h1>
     <p>Sreality · apartments for sale · right around you</p>
   </header>
 
   <div class="demo-banner" id="demo-banner" hidden>
-    <b>Demo.</b> Your location is simulated (you're “standing” on Náměstí Míru, Praha&nbsp;2). Go shows the real Sreality link instead of leaving this page.
+    <b>Demo.</b> Your location is simulated (you're “standing” on náměstí Míru, Prague&nbsp;2). Go shows the real Sreality link instead of leaving this page.
   </div>
 
   <div class="status" id="status" role="status" aria-live="polite"><span class="dot"></span><span id="status-text">Starting…</span></div>
@@ -235,7 +235,7 @@
   <section class="card">
     <form id="form" autocomplete="off">
       <div class="field">
-        <label for="street">Street / Ulice</label>
+        <label for="street">Street</label>
         <div class="row">
           <input type="text" id="street" name="street" inputmode="text" autocapitalize="words" spellcheck="false" placeholder="e.g. Vinohradská" required>
           <button type="button" class="icon-btn" id="locate" aria-label="Use my location again" title="Use my location again">
@@ -244,11 +244,11 @@
         </div>
       </div>
       <div class="field">
-        <label for="city">City / Obec</label>
-        <input type="text" id="city" name="city" autocapitalize="words" spellcheck="false" value="Praha" required>
+        <label for="city">City</label>
+        <input type="text" id="city" name="city" autocapitalize="words" spellcheck="false" value="Prague" required>
       </div>
       <div class="field">
-        <span class="label" id="size-label">Search area / Okolí</span>
+        <span class="label" id="size-label">Search area</span>
         <fieldset class="sizes" aria-labelledby="size-label">
           <input type="radio" name="size" id="size-100" value="100"><label for="size-100">100 m</label>
           <input type="radio" name="size" id="size-200" value="200"><label for="size-200">200 m</label>
@@ -332,7 +332,7 @@
   }
   function updateSizeHint() {
     var m = currentSize();
-    $("size-hint").innerHTML = "<b>Byty</b> · <b>Prodej</b> · " + m + " m each way (" +
+    $("size-hint").innerHTML = "<b>Apartments</b> · <b>For sale</b> · " + m + " m each way (" +
       (2 * m) + " × " + (2 * m) + " m area)";
   }
   (function initSize() {
@@ -392,7 +392,7 @@
 
   function reverseGeocode(c) {
     setStatus("Looking up the street…", "busy");
-    var url = NOMINATIM + "/reverse?format=jsonv2&zoom=17&addressdetails=1&accept-language=cs" +
+    var url = NOMINATIM + "/reverse?format=jsonv2&zoom=17&addressdetails=1&accept-language=en" +
       "&lat=" + c.lat.toFixed(6) + "&lon=" + c.lon.toFixed(6);
     fetchJson(url, 10000).then(function (data) {
       var a = (data && data.address) || {};
@@ -415,7 +415,7 @@
 
   /* ---------- Typed street → coordinates ---------- */
   function geocodeStreet(street, city) {
-    var url = NOMINATIM + "/search?format=jsonv2&limit=8&countrycodes=cz&accept-language=cs" +
+    var url = NOMINATIM + "/search?format=jsonv2&limit=8&countrycodes=cz&accept-language=en" +
       "&street=" + encodeURIComponent(street) + "&city=" + encodeURIComponent(city);
     return fetchJson(url, 10000).then(function (list) {
       var hits = (list || []).map(function (r) { return { lat: Number(r.lat), lon: Number(r.lon) }; })
@@ -495,7 +495,7 @@
     ev.preventDefault();
     notice.hidden = true;
     $("result").hidden = true;
-    var street = tidy(streetEl.value), city = tidy(cityEl.value) || "Praha", size = currentSize();
+    var street = tidy(streetEl.value), city = tidy(cityEl.value) || "Prague", size = currentSize();
     if (!street && !gps) { streetEl.focus(); setStatus("Type a street first."); return; }
     goBtn.disabled = true;
     setStatus(street ? "Finding " + street + "…" : "Using your location…", "busy");
@@ -541,7 +541,7 @@
       $("touch-icon").href = png;
       var here = location.href.split("#")[0].split("?")[0];
       var manifest = {
-        name: "Byty na prodej v okolí", short_name: "Byty okolí",
+        name: "Apartment Lookup", short_name: "Apartment Lookup",
         start_url: here, scope: here.replace(/[^/]*$/, ""), display: "standalone",
         background_color: "#f6f5f2", theme_color: "#c8102e",
         icons: [{ src: png, sizes: "512x512", type: "image/png", purpose: "any maskable" }]
@@ -569,14 +569,14 @@
         gps = { lat: 50.0755, lon: 14.4378, accuracy: 12 };
         setStatus("Looking up the street…", "busy");
         setTimeout(function () {
-          gpsStreet = "náměstí Míru"; gpsCity = "Praha";
-          if (!userEdited) { streetEl.value = gpsStreet; cityEl.value = "Praha"; }
-          setStatus("You're on náměstí Míru, Praha (demo location)", "ok");
+          gpsStreet = "náměstí Míru"; gpsCity = "Prague";
+          if (!userEdited) { streetEl.value = gpsStreet; cityEl.value = "Prague"; }
+          setStatus("You're on náměstí Míru, Prague (demo location)", "ok");
         }, 500);
       }, 700);
     };
     geocodeStreet = function (street, city) {
-      var hit = norm(city) === "praha" && DEMO_STREETS[norm(street)];
+      var hit = (norm(city) === "prague" || norm(city) === "praha") && DEMO_STREETS[norm(street)];
       return new Promise(function (resolve, reject) {
         setTimeout(function () {
           hit ? resolve({ lat: hit.lat, lon: hit.lon }) : reject(new Error("not found"));
