@@ -37,25 +37,13 @@
      4. fallback: city-wide search, e.g. /hledani/prodej/byty/praha (radius NOT
         applied), only after telling you so on screen.
 
-  FREE PROXY: Cloudflare Worker (dash.cloudflare.com → Workers → Create → paste,
-  deploy, then put its URL in SUGGEST_PROXY, e.g. "https://sreality-suggest.you.workers.dev/")
+  FREE PROXY: Cloudflare Worker  →  cloudflare-worker.js in this repo
   ------------------------------------------------------------------------------
-    export default {
-      async fetch(req) {
-        const allow = "https://YOUR-SITE.example";          // your site's origin
-        const cors = { "Access-Control-Allow-Origin": allow, "Vary": "Origin" };
-        if (req.method === "OPTIONS") return new Response(null, { headers: cors });
-        const inUrl = new URL(req.url);
-        const out = new URL("https://www.sreality.cz/api/v1/localities/suggest");
-        for (const k of ["phrase","category","locality_country_id","lang","limit","lat","lon"]) {
-          const v = inUrl.searchParams.get(k); if (v) out.searchParams.set(k, v);
-        }
-        const r = await fetch(out, { headers: { "Accept": "application/json" } });
-        return new Response(r.body, { status: r.status,
-          headers: { ...cors, "Content-Type": "application/json; charset=utf-8" } });
-      }
-    };
-    (Only forwards the suggest endpoint, so it is not an open proxy.)
+    Paste that file into a new Worker (dash.cloudflare.com → Workers & Pages →
+    Create → Create Worker → Deploy → Edit code), set ALLOWED_ORIGIN to your
+    site, deploy, then put the Worker's address in SUGGEST_PROXY below, e.g.
+    "https://sreality-suggest.yourname.workers.dev/". It only calls Sreality's
+    street lookup, so it is not an open proxy.
 
   DEMO MODE  (open the page as  index.html#demo, or just add #demo to the URL)
     Fakes your location (Kotlářka, Praha 5) and the street-ID lookup, and shows

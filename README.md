@@ -35,15 +35,19 @@ The live demo is private until you share it from its Share menu.
 
 Sreality's autocomplete endpoint (`/api/v1/localities/suggest`) blocks calls from web pages on other sites (it sends no CORS headers). The page is static, so a free **Cloudflare Worker** does that one call:
 
-1. Copy the Worker code from the comment at the top of `index.html`.
-2. Deploy it on Cloudflare (Workers → Create), with your site's address as the allowed origin.
-3. Paste the Worker's URL into `SUGGEST_PROXY` near the top of the page's script.
+1. Create a free account at [dash.cloudflare.com](https://dash.cloudflare.com).
+2. Go to **Workers & Pages → Create → Create Worker**, name it e.g. `sreality-suggest`, and click **Deploy**.
+3. Click **Edit code**, replace everything with [`cloudflare-worker.js`](cloudflare-worker.js), and set `ALLOWED_ORIGIN` to your site's address, e.g. `https://www.example.cz` (no trailing slash).
+4. Click **Deploy** and copy the Worker's address, e.g. `https://sreality-suggest.yourname.workers.dev`.
+5. In `index.html`, put that address into `var SUGGEST_PROXY = "";` and upload the file again.
+
+The Worker only calls Sreality's street lookup and only answers your own site. Nothing runs on your web hosting.
 
 Without the proxy, Go offers a search across the whole city with no radius, and the page says so on screen first.
 
 ## Hosting
 
-Any static HTTPS host works, because it's one file. The free option is **GitHub Pages**: in this repo, go to Settings → Pages, choose *Deploy from a branch*, then pick `main` and `/ (root)`. The app is then at `https://<user>.github.io/apartment-lookup/`. Location only works over HTTPS, which Pages provides.
+Any static HTTPS host works, because the page is one file (`index.html`); the Worker runs on Cloudflare. The free option is **GitHub Pages**: in this repo, go to Settings → Pages, choose *Deploy from a branch*, then pick `main` and `/ (root)`. The app is then at `https://<user>.github.io/apartment-lookup/`. Location only works over HTTPS, which Pages provides.
 
 ## Add to home screen
 
