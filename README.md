@@ -7,10 +7,6 @@ It's a single HTML file, [`index.html`](index.html), with no framework, no build
   <img src="docs/demo.gif" alt="Demo: the page finds náměstí Míru, 100 m is chosen and Go shows the Sreality link; then Žitná is typed with 200 m, and a recent search is repeated" width="300">
 </p>
 
-## Screens
-
-![Start screen with the street, size and Go button on the first screen; result after Go with recent searches below, in light and dark mode](docs/screens.png)
-
 ## How it works
 
 1. **Where you are.** The phone's GPS gives your position, and [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org) names the street and city. Both fields stay editable, and the city defaults to *Praha*.
