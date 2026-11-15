@@ -19,7 +19,7 @@ The live demo is private until you share it from its Share menu.
 
 ## Screens
 
-![Start screen with the street filled in from location and 100 m chosen; result after Go, in light and dark mode](docs/screens.png)
+![Start screen with the street, size and Go button on the first screen; result after Go with recent searches below, in light and dark mode](docs/screens.png)
 
 ## How it works
 
