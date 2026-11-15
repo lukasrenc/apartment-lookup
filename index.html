@@ -1,0 +1,620 @@
+<!doctype html>
+<!--
+==============================================================================
+  SREALITY STREET LOOKUP — one-file app
+  Opens Sreality.cz: apartments (byty) for sale (prodej), 500 m around a street.
+==============================================================================
+
+  SREALITY SEARCH URL FORMAT  (edit buildSrealityUrl() below if Sreality changes it)
+  ------------------------------------------------------------------------------
+    https://www.sreality.cz/hledani/prodej/byty
+        ?region=ulice%20<Street name>      label shown in the search box
+        &region-id=<numeric street id>     Sreality's own locality ID (REQUIRED)
+        &region-typ=street                 type of that ID (street|ward|municipality…)
+        &vzdalenost=0.5                    radius in km ("vzdálenost") → 0.5 = 500 m
+
+    Example (real link of this shape seen in the wild):
+    https://www.sreality.cz/hledani/prodej/byty?region=ulice%20Kotl%C3%A1%C5%99ka&region-id=125471&region-typ=street&vzdalenost=0.5
+
+    /prodej  = for sale      (/pronajem = rent)
+    /byty    = apartments    (/domy = houses)
+
+  GETTING THE STREET ID  (Sreality public autocomplete)
+  ------------------------------------------------------------------------------
+    GET https://www.sreality.cz/api/v1/localities/suggest
+        ?phrase=<street, city>&category=street_cz&locality_country_id=112&lang=cs&limit=10
+    → { "results": [ { "userData": {
+          "entityType": "street", "id": 125471, "suggestFirstRow": "Kotlářka",
+          "municipality": "Praha", "latitude": 50.07, "longitude": 14.38, … } } ] }
+    We take results where entityType == "street", prefer the right city and the
+    one nearest to your GPS position, and use userData.id as region-id.
+
+  !! CORS: Sreality's API does NOT send CORS headers, so a browser page on your
+  own domain usually cannot call it directly. The page tries, in order:
+     1. SUGGEST_PROXY (below), if you set one   ← recommended, see snippet
+     2. the Sreality API directly (works only if Sreality ever enables CORS)
+     3. an ID cached from an earlier successful lookup
+     4. fallback: city-wide search, e.g. /hledani/prodej/byty/praha (radius NOT
+        applied), only after telling you so on screen.
+
+  FREE PROXY: Cloudflare Worker (dash.cloudflare.com → Workers → Create → paste,
+  deploy, then put its URL in SUGGEST_PROXY, e.g. "https://sreality-suggest.you.workers.dev/")
+  ------------------------------------------------------------------------------
+    export default {
+      async fetch(req) {
+        const allow = "https://YOUR-SITE.example";          // your site's origin
+        const cors = { "Access-Control-Allow-Origin": allow, "Vary": "Origin" };
+        if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+        const inUrl = new URL(req.url);
+        const out = new URL("https://www.sreality.cz/api/v1/localities/suggest");
+        for (const k of ["phrase","category","locality_country_id","lang","limit","lat","lon"]) {
+          const v = inUrl.searchParams.get(k); if (v) out.searchParams.set(k, v);
+        }
+        const r = await fetch(out, { headers: { "Accept": "application/json" } });
+        return new Response(r.body, { status: r.status,
+          headers: { ...cors, "Content-Type": "application/json; charset=utf-8" } });
+      }
+    };
+    (Only forwards the suggest endpoint, so it is not an open proxy.)
+
+  DEMO MODE  (open the page as  index.html#demo, or just add #demo to the URL)
+    Fakes your location (Kotlářka, Praha 5) and the street-ID lookup, and shows
+    the Sreality link instead of leaving the page. Handy for previews; the real
+    app behaves exactly the same apart from those three things. Only Kotlářka
+    has a real ID (125471, taken from a public Sreality link); any other street
+    shows the "couldn't find the street ID" notice.
+
+  OTHER SERVICES
+    Reverse geocoding: OpenStreetMap Nominatim (free, max ~1 request/second,
+    https://operations.osmfoundation.org/policies/nominatim/). Called once per
+    "locate", never in a loop.
+    Geolocation needs HTTPS (or localhost).
+    Recent searches: localStorage key "srealityLookup.recent.v1" (last 5).
+==============================================================================
+-->
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Byty v okolí</title>
+<meta name="description" content="Open Sreality apartments for sale within 500 m of where you are.">
+<meta name="theme-color" content="#c8102e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Byty okolí">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link id="touch-icon" rel="apple-touch-icon" href="">
+<link id="favicon" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23c8102e'/%3E%3Cpath d='M32 12c-8.3 0-15 6.5-15 14.6C17 37.5 32 52 32 52s15-14.5 15-25.4C47 18.5 40.3 12 32 12zm0 20a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --card: #ffffff;
+    --text: #1c1b19;
+    --muted: #6b6862;
+    --line: #dedbd4;
+    --accent: #c8102e;
+    --accent-press: #a00c24;
+    --accent-text: #ffffff;
+    --ok: #1f7a4d;
+    --warn-bg: #fff4d6;
+    --warn-text: #6b4a00;
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141312;
+      --card: #1e1d1b;
+      --text: #f1efea;
+      --muted: #a29e96;
+      --line: #34322e;
+      --accent: #e8344f;
+      --accent-press: #c8213b;
+      --ok: #5fc596;
+      --warn-bg: #3a2f12;
+      --warn-text: #f3d48a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141312; --card: #1e1d1b; --text: #f1efea; --muted: #a29e96;
+    --line: #34322e; --accent: #e8344f; --accent-press: #c8213b;
+    --ok: #5fc596; --warn-bg: #3a2f12; --warn-text: #f3d48a;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100dvh;
+  }
+  /* Content stacks from the bottom so the Go button sits under the thumb. */
+  .app {
+    max-width: 520px;
+    margin: 0 auto;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    gap: 14px;
+  }
+  header h1 { font-size: 22px; margin: 4px 0 2px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); font-size: 15px; }
+  .spacer { flex: 1; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+  .section-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px;
+  }
+  .recent-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .recent-list button {
+    width: 100%; min-height: 52px; text-align: left;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 14px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    font: inherit; cursor: pointer;
+  }
+  .recent-list button:active { background: var(--line); }
+  .recent-list .r-main { font-weight: 600; }
+  .recent-list .r-sub { color: var(--muted); font-size: 14px; }
+  .recent-list .r-go { color: var(--accent); font-weight: 700; flex: none; }
+  .empty { color: var(--muted); font-size: 15px; margin: 0; }
+
+  .status {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 15px; color: var(--muted); min-height: 24px;
+  }
+  .status.ok { color: var(--ok); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
+  .status.busy .dot { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+
+  label { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
+  .field + .field { margin-top: 12px; }
+  .row { display: flex; gap: 8px; }
+  input[type="text"] {
+    width: 100%; min-height: 54px; padding: 0 14px;
+    border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text);
+    font: inherit; font-size: 18px; /* ≥16px stops iOS zoom-on-focus */
+  }
+  input[type="text"]:focus { outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent); border-color: var(--accent); }
+  .icon-btn {
+    flex: none; width: 54px; min-height: 54px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .icon-btn:active { background: var(--line); }
+  .icon-btn svg { width: 24px; height: 24px; }
+
+  .fixed { margin: 12px 0 0; font-size: 14px; color: var(--muted); }
+  .fixed b { color: var(--text); font-weight: 600; }
+
+  .notice {
+    background: var(--warn-bg); color: var(--warn-text);
+    border-radius: 12px; padding: 12px 14px; font-size: 15px;
+  }
+  .notice[hidden] { display: none; }
+  .notice .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .notice button, .notice a {
+    flex: 1; min-height: 46px; border-radius: 10px; border: 0;
+    font: inherit; font-weight: 600; cursor: pointer;
+    display: grid; place-items: center; text-decoration: none;
+  }
+  .notice .primary { background: var(--accent); color: var(--accent-text); }
+  .notice .secondary { background: transparent; color: inherit; border: 1px solid currentColor; }
+
+  .demo-banner {
+    border: 1px dashed var(--accent); color: var(--text);
+    border-radius: 12px; padding: 10px 14px; font-size: 14px;
+  }
+  .demo-banner b { color: var(--accent); }
+  .result { display: grid; gap: 10px; }
+  .result[hidden], .demo-banner[hidden] { display: none; }
+  .result code {
+    display: block; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted); word-break: break-all;
+  }
+  .result a {
+    min-height: 52px; border-radius: 12px; display: grid; place-items: center;
+    background: var(--text); color: var(--bg); font-weight: 700; text-decoration: none;
+  }
+  .go {
+    width: 100%; min-height: 76px; border: 0; border-radius: 20px;
+    background: var(--accent); color: var(--accent-text);
+    font: inherit; font-size: 24px; font-weight: 800; letter-spacing: 0.02em;
+    cursor: pointer; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .go:active { background: var(--accent-press); transform: translateY(1px); }
+  .go:disabled { opacity: 0.6; }
+</style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <h1>Byty na prodej v okolí</h1>
+    <p>Sreality · apartments for sale · 500 m around a street</p>
+  </header>
+
+  <div class="demo-banner" id="demo-banner" hidden>
+    <b>Demo.</b> Location and street lookup are simulated (you're “standing” on Kotlářka, Praha&nbsp;5). Go shows the Sreality link instead of leaving this page.
+  </div>
+
+  <section class="card" aria-labelledby="recent-h">
+    <h2 class="section-title" id="recent-h">Recent searches</h2>
+    <ul class="recent-list" id="recent"></ul>
+    <p class="empty" id="recent-empty">No searches yet.</p>
+  </section>
+
+  <div class="spacer"></div>
+
+  <div class="status" id="status" role="status" aria-live="polite"><span class="dot"></span><span id="status-text">Starting…</span></div>
+
+  <section class="card">
+    <form id="form" autocomplete="off">
+      <div class="field">
+        <label for="street">Street / Ulice</label>
+        <div class="row">
+          <input type="text" id="street" name="street" inputmode="text" autocapitalize="words" spellcheck="false" placeholder="e.g. Vinohradská" required>
+          <button type="button" class="icon-btn" id="locate" aria-label="Use my location again" title="Use my location again">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="city">City / Obec</label>
+        <input type="text" id="city" name="city" autocapitalize="words" spellcheck="false" value="Praha" required>
+      </div>
+      <p class="fixed"><b>Byty</b> · <b>Prodej</b> · <b>500 m</b> radius</p>
+    </form>
+  </section>
+
+  <section class="card result" id="result" hidden aria-live="polite">
+    <h2 class="section-title">Go would open</h2>
+    <code id="result-url"></code>
+    <a id="result-open" href="#" target="_blank" rel="noopener">Open on Sreality ↗</a>
+  </section>
+
+  <div class="notice" id="notice" hidden>
+    <div id="notice-text"></div>
+    <div class="actions">
+      <a class="primary" id="notice-open" href="#">Open anyway</a>
+      <button type="button" class="secondary" id="notice-close">Cancel</button>
+    </div>
+  </div>
+
+  <button class="go" id="go" type="submit" form="form">GO →</button>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- Settings ---------- */
+  // Optional: URL of a small CORS proxy for Sreality's suggest API (see the
+  // comment at the top of this file). Leave "" to try Sreality directly.
+  var SUGGEST_PROXY = "";
+
+  var SREALITY_SUGGEST = "https://www.sreality.cz/api/v1/localities/suggest";
+  var SREALITY_SEARCH = "https://www.sreality.cz/hledani/prodej/byty";
+  var RADIUS_KM = "0.5";
+  var RECENT_KEY = "srealityLookup.recent.v1";
+  var IDCACHE_KEY = "srealityLookup.ids.v1";
+  var MAX_RECENT = 5;
+  // Demo mode: add #demo to the URL, or a host page setting window.SREALITY_DEMO = true.
+  var DEMO = location.hash === "#demo" || window.SREALITY_DEMO === true;
+
+  /* ---------- Elements ---------- */
+  var $ = function (id) { return document.getElementById(id); };
+  var form = $("form"), streetEl = $("street"), cityEl = $("city"), goBtn = $("go");
+  var statusEl = $("status"), statusText = $("status-text");
+  var notice = $("notice"), noticeText = $("notice-text"), noticeOpen = $("notice-open");
+
+  var lastCoords = null;  // {lat, lon} from the browser, used to pick the nearest street match
+  var userEdited = false; // don't overwrite what the user typed
+
+  function setStatus(text, kind) {
+    statusText.textContent = text;
+    statusEl.className = "status" + (kind ? " " + kind : "");
+  }
+
+  /* ---------- Storage (safe) ---------- */
+  function load(key, fallback) {
+    try { var v = JSON.parse(localStorage.getItem(key)); return v == null ? fallback : v; }
+    catch (e) { return fallback; }
+  }
+  function save(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode etc. */ }
+  }
+
+  /* ---------- Text helpers (Czech diacritics) ---------- */
+  function norm(s) {
+    return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .toLowerCase().replace(/\s+/g, " ").trim();
+  }
+  function tidy(s) { return String(s || "").normalize("NFC").replace(/\s+/g, " ").trim(); }
+  function slug(s) { return norm(s).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+
+  /* ---------- URL builder ---------- */
+  function buildSrealityUrl(streetLabel, regionId) {
+    return SREALITY_SEARCH +
+      "?region=" + encodeURIComponent("ulice " + streetLabel) +
+      "&region-id=" + encodeURIComponent(regionId) +
+      "&region-typ=street" +
+      "&vzdalenost=" + RADIUS_KM;
+  }
+  // Fallback when no street ID is available: city-wide apartments for sale,
+  // e.g. https://www.sreality.cz/hledani/prodej/byty/praha
+  // Sreality cannot apply the radius without an ID.
+  function buildFallbackUrl(city) {
+    return SREALITY_SEARCH + "/" + (slug(city) || "praha");
+  }
+
+  /* ---------- Geolocation + reverse geocoding ---------- */
+  function locate() {
+    if (!("geolocation" in navigator)) {
+      setStatus("Location not available here — type the street.");
+      return;
+    }
+    if (!window.isSecureContext) {
+      setStatus("Location needs HTTPS — type the street.");
+      return;
+    }
+    setStatus("Finding your location…", "busy");
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      lastCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      reverseGeocode(lastCoords);
+    }, function (err) {
+      var msg = err && err.code === 1 ? "Location blocked" : "Couldn't get location";
+      setStatus(msg + " — type the street.");
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+  }
+
+  function reverseGeocode(c) {
+    setStatus("Looking up the street…", "busy");
+    var url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&addressdetails=1" +
+      "&accept-language=cs&lat=" + c.lat.toFixed(6) + "&lon=" + c.lon.toFixed(6);
+    fetchJson(url, 10000).then(function (data) {
+      var a = (data && data.address) || {};
+      var street = a.road || a.pedestrian || a.square || a.footway || a.path || a.cycleway || a.place || "";
+      var city = a.city || a.town || a.village || a.municipality || "";
+      if (!userEdited) {
+        if (street) streetEl.value = tidy(street);
+        if (city) cityEl.value = tidy(city);
+      }
+      if (street) setStatus("You're on " + tidy(street) + (city ? ", " + tidy(city) : ""), "ok");
+      else setStatus("No street found here — type it.");
+    }).catch(function () {
+      setStatus("Couldn't look up the street — type it.");
+    });
+  }
+
+  function fetchJson(url, timeoutMs) {
+    var ctrl = "AbortController" in window ? new AbortController() : null;
+    var t = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 8000) : null;
+    return fetch(url, { signal: ctrl ? ctrl.signal : undefined, headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .finally(function () { if (t) clearTimeout(t); });
+  }
+
+  /* ---------- Sreality street ID lookup ---------- */
+  function suggestUrl(base, street, city) {
+    return base + (base.indexOf("?") === -1 ? "?" : "&") +
+      "phrase=" + encodeURIComponent(street + ", " + city) +
+      "&category=street_cz&locality_country_id=112&lang=cs&limit=10";
+  }
+
+  function distance(a, b) { // rough metres, fine for ranking
+    var dLat = (a.lat - b.lat) * 111320;
+    var dLon = (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180);
+    return Math.sqrt(dLat * dLat + dLon * dLon);
+  }
+
+  function pickStreet(data, street, city) {
+    var items = ((data && data.results) || []).map(function (r) { return r.userData || r; })
+      .filter(function (u) { return u && u.entityType === "street" && (u.id || u.street_id); });
+    if (!items.length) return null;
+    var nStreet = norm(street), nCity = norm(city);
+    items.forEach(function (u) {
+      var score = 0;
+      var name = norm(u.suggestFirstRow || u.street || "");
+      var muni = norm([u.municipality, u.suggestSecondRow, u.district, u.region].join(" "));
+      if (name === nStreet) score += 1000; else if (name.indexOf(nStreet) === 0) score += 400;
+      if (nCity && muni.indexOf(nCity) !== -1) score += 500;
+      if (lastCoords && u.latitude && u.longitude) {
+        score -= Math.min(distance(lastCoords, { lat: u.latitude, lon: u.longitude }) / 50, 900);
+      }
+      u._score = score;
+    });
+    items.sort(function (a, b) { return b._score - a._score; });
+    var best = items[0];
+    return { id: String(best.id || best.street_id), label: tidy(best.suggestFirstRow || street) };
+  }
+
+  function lookupStreetId(street, city) {
+    var cacheKey = norm(street) + "|" + norm(city);
+    var cache = load(IDCACHE_KEY, {});
+    var sources = [];
+    if (SUGGEST_PROXY) sources.push(suggestUrl(SUGGEST_PROXY, street, city));
+    sources.push(suggestUrl(SREALITY_SUGGEST, street, city));
+
+    function attempt(i) {
+      if (i >= sources.length) {
+        return cache[cacheKey] ? Promise.resolve(cache[cacheKey]) : Promise.reject(new Error("lookup failed"));
+      }
+      return fetchJson(sources[i], 7000).then(function (data) {
+        var hit = pickStreet(data, street, city);
+        if (!hit) throw new Error("no street match");
+        cache[cacheKey] = hit; save(IDCACHE_KEY, cache);
+        return hit;
+      }).catch(function (e) {
+        if (e && e.message === "no street match") throw e; // API answered: street truly not found
+        return attempt(i + 1);
+      });
+    }
+    return attempt(0);
+  }
+
+  /* ---------- Recent searches ---------- */
+  function addRecent(entry) {
+    var list = load(RECENT_KEY, []).filter(function (r) {
+      return !(norm(r.street) === norm(entry.street) && norm(r.city) === norm(entry.city));
+    });
+    list.unshift(entry);
+    save(RECENT_KEY, list.slice(0, MAX_RECENT));
+    renderRecent();
+  }
+
+  function renderRecent() {
+    var list = load(RECENT_KEY, []);
+    var ul = $("recent");
+    ul.textContent = "";
+    $("recent-empty").hidden = list.length > 0;
+    list.forEach(function (r) {
+      var li = document.createElement("li");
+      var b = document.createElement("button");
+      b.type = "button";
+      var text = document.createElement("span");
+      var main = document.createElement("div"); main.className = "r-main"; main.textContent = r.street;
+      var sub = document.createElement("div"); sub.className = "r-sub";
+      sub.textContent = r.city + (r.exact ? " · 500 m" : " · city-wide");
+      text.appendChild(main); text.appendChild(sub);
+      var go = document.createElement("span"); go.className = "r-go"; go.textContent = "→";
+      b.appendChild(text); b.appendChild(go);
+      b.addEventListener("click", function () {
+        addRecent(Object.assign({}, r, { ts: Date.now() }));
+        openUrl(r.url);
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+  }
+
+  /* ---------- Go ---------- */
+  function openUrl(url) {
+    if (DEMO) {
+      $("result-url").textContent = url;
+      $("result-open").href = url;
+      $("result").hidden = false;
+      setStatus("Demo: here's the link Go would open.", "ok");
+      return;
+    }
+    window.location.assign(url);
+  }
+
+  function showFallback(street, city, reason) {
+    var url = buildFallbackUrl(city);
+    noticeText.textContent = reason + " Sreality needs its own street ID for the 500 m radius. " +
+      "You can open a search across " + city + " instead.";
+    noticeOpen.href = url;
+    noticeOpen.onclick = function () {
+      addRecent({ street: street, city: city, url: url, exact: false, ts: Date.now() });
+    };
+    notice.hidden = false;
+    notice.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    notice.hidden = true;
+    $("result").hidden = true;
+    var street = tidy(streetEl.value), city = tidy(cityEl.value) || "Praha";
+    if (!street) { streetEl.focus(); setStatus("Type a street first."); return; }
+    goBtn.disabled = true;
+    setStatus("Finding " + street + " on Sreality…", "busy");
+    lookupStreetId(street, city).then(function (hit) {
+      var url = buildSrealityUrl(hit.label, hit.id);
+      addRecent({ street: street, city: city, url: url, exact: true, ts: Date.now() });
+      setStatus("Opening Sreality…", "ok");
+      openUrl(url);
+    }).catch(function (e) {
+      var reason = e && e.message === "no street match"
+        ? "Sreality doesn't know a street called “" + street + "” in " + city + "."
+        : e && e.message === "demo unknown"
+        ? "The demo only knows Kotlářka, Praha (the real app looks up any street)."
+        : "Couldn't reach Sreality's street lookup.";
+      setStatus(reason);
+      showFallback(street, city, reason);
+    }).finally(function () {
+      goBtn.disabled = false;
+    });
+  });
+
+  $("notice-close").addEventListener("click", function () { notice.hidden = true; });
+  $("locate").addEventListener("click", function () { userEdited = false; locate(); });
+  streetEl.addEventListener("input", function () { userEdited = true; });
+  cityEl.addEventListener("input", function () { userEdited = true; });
+  // Coming back from Sreality via the back button: re-enable the button.
+  window.addEventListener("pageshow", function () { goBtn.disabled = false; });
+
+  /* ---------- Home-screen icon + manifest (generated, so this stays one file) ---------- */
+  function setupInstall() {
+    try {
+      var c = document.createElement("canvas"); c.width = c.height = 512;
+      var g = c.getContext("2d");
+      g.fillStyle = "#c8102e"; g.fillRect(0, 0, 512, 512);
+      g.fillStyle = "#ffffff";
+      g.beginPath(); // map pin
+      g.moveTo(256, 420);
+      g.bezierCurveTo(256, 420, 136, 300, 136, 210);
+      g.arc(256, 210, 120, Math.PI, 0);
+      g.bezierCurveTo(376, 300, 256, 420, 256, 420);
+      g.fill();
+      g.fillStyle = "#c8102e";
+      g.beginPath(); g.moveTo(256, 150); g.lineTo(316, 200); g.lineTo(300, 200); g.lineTo(300, 262);
+      g.lineTo(212, 262); g.lineTo(212, 200); g.lineTo(196, 200); g.closePath(); g.fill(); // little house
+      var png = c.toDataURL("image/png");
+      $("touch-icon").href = png;
+      var here = location.href.split("#")[0].split("?")[0];
+      var manifest = {
+        name: "Byty na prodej v okolí", short_name: "Byty okolí",
+        start_url: here, scope: here.replace(/[^/]*$/, ""), display: "standalone",
+        background_color: "#f6f5f2", theme_color: "#c8102e",
+        icons: [{ src: png, sizes: "512x512", type: "image/png", purpose: "any maskable" }]
+      };
+      var link = document.createElement("link");
+      link.rel = "manifest";
+      link.href = "data:application/manifest+json," + encodeURIComponent(JSON.stringify(manifest));
+      document.head.appendChild(link);
+    } catch (e) { /* non-essential */ }
+  }
+
+  /* ---------- Start ---------- */
+  /* ---------- Demo mode (#demo): simulated location + lookup, no redirect ---------- */
+  if (DEMO) {
+    $("demo-banner").hidden = false;
+    noticeOpen.target = "_blank";
+    RECENT_KEY += ".demo"; IDCACHE_KEY += ".demo";
+    var DEMO_STREETS = { "kotlarka|praha": { id: "125471", label: "Kotlářka" } };
+    locate = function () {
+      setStatus("Finding your location…", "busy");
+      setTimeout(function () {
+        lastCoords = { lat: 50.0716, lon: 14.3880 };
+        setStatus("Looking up the street…", "busy");
+        setTimeout(function () {
+          if (!userEdited) { streetEl.value = "Kotlářka"; cityEl.value = "Praha"; }
+          setStatus("You're on Kotlářka, Praha (demo location)", "ok");
+        }, 500);
+      }, 700);
+    };
+    lookupStreetId = function (street, city) {
+      var hit = DEMO_STREETS[norm(street) + "|" + norm(city)];
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () { hit ? resolve(hit) : reject(new Error("demo unknown")); }, 450);
+      });
+    };
+  }
+
+  renderRecent();
+  setupInstall();
+  locate();
+})();
+</script>
+</body>
+</html>
